@@ -48,7 +48,7 @@ try:
 except FileNotFoundError:
     pass
 
-DEFAULT_THRESHOLD = int(os.environ.get("ROUGH_SCORE_THRESHOLD", "50"))
+DEFAULT_THRESHOLD = int(os.environ.get("ROUGH_SCORE_THRESHOLD", "60"))
 TODAY_JST = datetime.now(JST).strftime("%Y%m%d")
 
 st.title("🔥 荒れるレース検出ダッシュボード")

@@ -118,8 +118,8 @@ DRY_RUN=true python main_daily_preview.py    # 事前予想の日次ダイジェ
 
 ## 設定の調整
 
-- 直前通知のしきい値: `main.py` の `ROUGH_SCORE_THRESHOLD` 環境変数（デフォルト50 = 「大波乱気配🔥」ライン）。
-  展示タイム差0.1秒ごとに20点加算される単純な計算式。20〜49は「波乱含み」。
+- 直前通知のしきい値: `main.py` の `ROUGH_SCORE_THRESHOLD` 環境変数（デフォルト60）。
+  展示タイム差0.1秒ごとに20点加算される単純な計算式。score 50以上が「大波乱気配🔥」の目安、20〜49は「波乱含み」。
   ダッシュボードではスライダーで調整可能（表示のみ、実際の自動通知の閾値はActions側の設定）
 - 事前予想通知のしきい値: `main_daily_preview.py` の `PRE_RACE_SCORE_THRESHOLD` 環境変数
   （デフォルト45 = 「波乱注意🔥」ライン）
