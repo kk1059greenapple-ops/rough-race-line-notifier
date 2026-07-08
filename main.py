@@ -6,9 +6,10 @@ GitHub Actionsから数分おきに起動される想定（.github/workflows/rou
 
 処理の流れ:
   1. rough_race_scanner で全会場を巡回し、締切間際のレースを収集・スコアリング
-  2. スコアが閾値以上（デフォルト: score >= 70 = "大波乱気配🔥"）のレースを抽出
-  3. state_store で当日通知済みのレースを除外（重複通知防止）
-  4. 未通知の新規該当レースがあればLINEにpush通知し、通知済みとして記録
+  2. 展示タイムが公表済みの結果を daily_summary.json に蓄積（当日の検出履歴）
+  3. スコアが閾値以上（デフォルト: score >= 50 = "大波乱気配🔥"）のレースを抽出
+  4. state_store で当日通知済みのレースを除外（重複通知防止）
+  5. 未通知の新規該当レースがあればLINEにpush通知し、通知済みとして記録
 """
 
 import asyncio
@@ -17,7 +18,10 @@ import sys
 
 from rough_race_scanner import find_rough_races_today
 from line_notify import send_line_message, build_rough_race_message, LineNotifyError
-from state_store import load_state, save_state, race_key, is_notified, mark_notified
+from state_store import (
+    load_state, save_state, race_key, is_notified, mark_notified,
+    load_daily_summary, save_daily_summary, upsert_daily_race,
+)
 
 # 通知を送るスコアの閾値。デフォルトは「大波乱気配🔥」ライン。
 # 環境変数 ROUGH_SCORE_THRESHOLD で上書き可能（例: 20 にすると「波乱含み」も拾う）
@@ -35,6 +39,14 @@ def main() -> int:
     if status != "ok":
         print(f"[INFO] 対象レースなし（status={status}）")
         return 0
+
+    # 展示タイムが公表済みの結果は、閾値未満も含めて当日の検出履歴に記録する
+    recordable = [r for r in results if r.get("status") != "データ収集中"]
+    if recordable:
+        summary = load_daily_summary(date_hd)
+        for race in recordable:
+            upsert_daily_race(summary, date_hd, race)
+        save_daily_summary(summary)
 
     candidates = [r for r in results if r["score"] >= SCORE_THRESHOLD]
     if not candidates:
