@@ -9,14 +9,14 @@
 - `rough_race_scanner.py` — 全24会場を巡回し、締切間際レースを展示タイムでスコアリングする検出ロジック
 - `racelist_scanner.py` — 出走表（全国勝率・モーター成績・級別・今節成績＝過去の戦績）から
   終日レースを事前ランキングするロジック
-- `main.py` — 直前情報ベースの随時LINE通知（締切15分前後、5分おき）
+- `main.py` — 直前情報ベースの随時LINE通知（締切15分前後、15分おき）
 - `main_daily_preview.py` — 事前予想モードの日次ダイジェストLINE通知（1日1回、朝）
 - `line_notify.py` — LINE Messaging API push送信
 - `state_store.py` — 通知済みレース／検出履歴／日次通知済みフラグを記録
 - `notified_races.json` — 直前通知の重複防止用状態ファイル
 - `daily_summary.json` — 当日の検出履歴（ダッシュボードの「本日の検出履歴」タブ用）
 - `daily_preview_sent.json` — 事前予想の日次通知が送信済みかの記録
-- `.github/workflows/rough_race_notify.yml` — JST 9:00〜22:00に5分おき自動実行（直前通知）
+- `.github/workflows/rough_race_notify.yml` — JST 9:00〜22:00に15分おき自動実行（直前通知）
 - `.github/workflows/daily_preview_notify.yml` — JST 8:00に1日1回自動実行（事前予想の日次通知）
 
 **自動通知（GitHub Actions・2系統）** と **手動確認用ダッシュボード（Streamlit）** の組み合わせです。
@@ -25,7 +25,7 @@
 ## 3つのモード（ダッシュボードのタブ）
 
 1. **🔎 直前スキャン** — 締切15分前後のレースの展示タイムから荒れ度を判定（従来機能）。
-   `main.py`による自動LINE通知（5分おき）もこのロジックを使用。
+   `main.py`による自動LINE通知（15分おき）もこのロジックを使用。
 2. **🌅 事前予想（全レース）** — 展示タイムを待たず、出走表の全国勝率・モーター成績・
    級別・フライング歴・**今節（当該開催）ここ数走の着順＝過去の戦績**から、
    今日開催される全レースを「荒れそうな順」にランキング。
@@ -82,7 +82,7 @@ git push -u origin main
 Actionsタブから各ワークフローを「Run workflow」で手動実行・動作確認もできます
 （`dry_run: true` でLINE送信せずログ確認のみ可能）。
 
-- **Rough Race LINE Notifier**: JST 9:00〜22:00の間、5分おきに直前情報をスキャンし通知
+- **Rough Race LINE Notifier**: JST 9:00〜22:00の間、15分おきに直前情報をスキャンし通知
 - **Daily Rough Race Preview (LINE)**: JST 8:00に1日1回、事前予想の上位レースをまとめて通知
 
 ### 5. ダッシュボード（Streamlit）をデプロイ（任意）
