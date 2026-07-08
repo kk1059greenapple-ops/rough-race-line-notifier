@@ -70,6 +70,20 @@ git push -u origin main
    検索すると画像付き手順が複数見つかります（Webhookで一時受信して確認するのが確実です）
    → これが `LINE_USER_ID`
 
+### 3.5 複数人に通知したい場合
+
+他の人にも同じ通知を届けたい場合、その人にも公式アカウントを友だち追加してもらい、
+userIdを取得してカンマ区切りで追加します。
+
+1. その人にBotのQRコードを送り、LINEアプリで友だち追加してもらう
+2. チャネル管理画面 →「Messaging API設定」→「Webhookの利用」を一時的にON、
+   Webhook URLに https://webhook.site で発行した一時URLを設定
+3. その人にBotへ何かメッセージを送ってもらう
+4. webhook.siteの画面に届いたリクエスト内容から `"userId": "Uxxxxxxxx..."` を確認
+5. 確認できたら「Webhookの利用」は元に戻してOK（push通知だけなら不要）
+6. `LINE_USER_ID` の値を `Uaaaa...,Ubbbb...,Ucccc...` のようにカンマ区切りで複数指定
+   （GitHub Secrets・Streamlit Secrets両方とも同じ形式でOK。空白は入れても入れなくても可）
+
 ### 4. GitHubリポジトリにSecretsを登録（自動通知用）
 
 新しく作ったリポジトリ →「Settings」→「Secrets and variables」→「Actions」→
