@@ -25,7 +25,7 @@ import streamlit as st
 
 from rough_race_scanner import find_rough_races_today
 from racelist_scanner import scan_all_races_today
-from line_notify import send_line_message, build_rough_race_message, LineNotifyError
+from line_notify import send_line_message, build_rough_race_message, build_daily_preview_message, LineNotifyError
 from state_store import (
     load_state, save_state, race_key, is_notified, mark_notified,
     load_daily_summary, daily_races_sorted,
@@ -162,11 +162,22 @@ with tab_preview:
     else:
         top_n = st.slider("表示件数", min_value=5, max_value=len(p_results) or 5, value=min(20, len(p_results) or 5), key="preview_topn")
         st.subheader(f"事前予想ランキング（全{len(p_results)}レース中、上位{top_n}件）")
+
+        if st.button("📩 表示中の上位レースをLINEに送る", key="preview_send_btn"):
+            try:
+                send_line_message(build_daily_preview_message(p_results[:top_n], target_date or TODAY_JST))
+                st.success("送信しました")
+            except LineNotifyError as e:
+                st.error(f"送信失敗: {e}")
+
         for race in p_results[:top_n]:
             with st.container(border=True):
                 st.markdown(f"**{race['venue']} {race['race_no']}R** — 判定: **{race['status']}**（score {race['score']}）")
                 st.caption(f"理由: {race['reasons']}")
-                st.caption(f"1号艇級別:{race['b1_class']} / 1号艇全国勝率:{race['b1_win']}")
+                st.caption(
+                    f"1号艇級別:{race['b1_class']} / 1号艇全国勝率:{race['b1_win']} / "
+                    f"1号艇今節平均着順:{race['b1_avg_rank']}"
+                )
 
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ import os
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), "notified_races.json")
 DAILY_SUMMARY_FILE = os.path.join(os.path.dirname(__file__), "daily_summary.json")
+PREVIEW_STATE_FILE = os.path.join(os.path.dirname(__file__), "daily_preview_sent.json")
 
 
 def _empty_state(date_hd: str) -> dict:
@@ -97,3 +98,21 @@ def upsert_daily_race(summary: dict, date_hd: str, race: dict) -> None:
 
 def daily_races_sorted(summary: dict) -> list:
     return sorted(summary.get("races", {}).values(), key=lambda r: r.get("score", 0), reverse=True)
+
+
+# --- 事前予想の日次LINE通知の重複送信防止（daily_preview_sent.json） -------
+
+def already_sent_preview(date_hd: str) -> bool:
+    if not os.path.exists(PREVIEW_STATE_FILE):
+        return False
+    try:
+        with open(PREVIEW_STATE_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return False
+    return state.get("date") == date_hd
+
+
+def mark_preview_sent(date_hd: str) -> None:
+    with open(PREVIEW_STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump({"date": date_hd}, f, ensure_ascii=False, indent=2)

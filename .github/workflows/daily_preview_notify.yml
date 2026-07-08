@@ -1,0 +1,52 @@
+name: Daily Rough Race Preview (LINE)
+
+on:
+  schedule:
+    # UTC 23:00 = JST 8:00（当日レースの出走表が出揃った頃を想定）
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true にするとLINE送信せずログ出力のみ行う"
+        required: false
+        default: "false"
+      force_resend:
+        description: "true にすると本日分を送信済みでも再送する"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rough-race-daily-preview
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install aiohttp beautifulsoup4 lxml requests
+
+      - name: Run daily preview scanner
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          FORCE_RESEND: ${{ github.event.inputs.force_resend || 'false' }}
+        run: python main_daily_preview.py
+
+      - name: Commit updated preview state
+        run: |
+          git config user.name "rough-race-bot"
+          git config user.email "actions@github.com"
+          git add daily_preview_sent.json
+          git diff --cached --quiet || git commit -m "chore: update daily preview sent state [skip ci]"
+          git push
