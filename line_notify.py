@@ -59,6 +59,5 @@ def build_rough_race_message(race: dict) -> str:
         f"{race['venue']} {race['race_no']}R（締切 {race['deadline']}）\n"
         f"判定: {race['status']}（score {race['score']}）\n"
         f"理由: {race['reasons']}\n"
-        f"1号艇展示: {race['b1_ex']} / 最速展示: {race['best_ex']}\n"
-        f"1号艇周回: {race['b1_lap']} / 最速周回: {race['best_lap']}号艇"
+        f"1号艇展示タイム: {race['b1_ex']} / 最速展示タイム: {race['best_ex']}"
     )

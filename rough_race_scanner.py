@@ -60,40 +60,61 @@ async def fetch_html(session, url, semaphore, retries=2):
 
 
 def parse_exhibition_data(html):
+    """
+    「直前情報」ページの出走表テーブルから、各艇の展示タイムを取り出す。
+
+    実際のページのテーブル構造（2026年7月時点でboatrace.jpから直接確認済み）:
+    1艇あたり4つの<tr>で構成される（本体行 + 進入行 + ST行 + 着順行）。
+    枠番(1〜6)・体重・展示タイム・チルト・プロペラ・部品交換は「本体行」のみに
+    実データが乗り、以降の3行は前走成績（進入/ST/着順）だけを持つ。
+    「一周タイム」に相当する項目はこのページには存在しない。
+
+    そのため、各艇の本体行を「先頭セルが1〜6の数字」で特定し、
+    その行の中から展示タイムらしき小数（6.0〜9.0秒程度）を1つだけ拾う。
+    体重（例: 52.4kg）は小数点以下1桁なので6.0〜9.0秒の抽出パターンとは衝突しない。
+    """
     if not html:
         return None
     soup = BeautifulSoup(html, "html.parser")
-    boats = [{} for _ in range(6)]
-    found_any = False
 
+    boats_by_num = {}
     for table in soup.select("table"):
         rows = table.select("tbody tr")
-        if len(rows) < 6:
-            continue
-
-        for i, row in enumerate(rows[:6]):
-            txt = row.get_text(strip=True)
-            vals = re.findall(r"(\d{1,2}\.\d{2})", txt)
-            if not vals:
+        for row in rows:
+            cells = row.select("td")
+            if not cells:
+                continue
+            first_text = cells[0].get_text(strip=True)
+            if first_text not in ("1", "2", "3", "4", "5", "6"):
                 continue
 
-            found_any = True
+            boat_num = int(first_text)
+            row_text = row.get_text(" ", strip=True)
+            vals = re.findall(r"(\d{1,2}\.\d{2})", row_text)
+            ex_time = None
             for v_str in vals:
                 v = float(v_str)
                 if 6.0 <= v <= 9.0:
-                    if "ex_time" not in boats[i]:
-                        boats[i]["ex_time"] = v
-                    elif "turn_time" not in boats[i]:
-                        boats[i]["turn_time"] = v
-                    else:
-                        boats[i]["straight_time"] = v
-                elif 34.0 <= v <= 46.0:
-                    boats[i]["lap_time"] = v
+                    ex_time = v
+                    break
 
-    return boats if found_any else None
+            # 同じ枠番が複数テーブルにまたがって出現した場合は、値が取れた方を優先する
+            if boat_num not in boats_by_num or ex_time is not None:
+                boats_by_num[boat_num] = {"ex_time": ex_time} if ex_time is not None else boats_by_num.get(boat_num, {})
+
+    if not boats_by_num:
+        return None
+
+    boats = [boats_by_num.get(i, {}) for i in range(1, 7)]
+    return boats
 
 
 def calculate_roughness_score(boats, venue_name, rno, deadline):
+    """
+    1号艇の展示タイムが他艇（特に最速艇）と比べてどれだけ見劣りするかでスコア化する。
+    展示タイムのみが実際に取得できる指標のため（一周タイム等はboatrace.jpの
+    直前情報ページには存在しない）、判定はこの1指標に基づく単純なものにしている。
+    """
     if not boats:
         return None
 
@@ -111,35 +132,24 @@ def calculate_roughness_score(boats, venue_name, rno, deadline):
         }
 
     best_ex_boat, best_ex_val = min(valid_ex, key=lambda x: x[1])
-    if b1_ex:
+    if b1_ex is not None:
         diff_ex = round(b1_ex - best_ex_val, 2)
-        if best_ex_boat != 1:
-            score += int(diff_ex * 1000)
-            reasons.append(f"展示最速:{best_ex_boat}号艇")
+        if best_ex_boat != 1 and diff_ex > 0:
+            # 展示タイム差0.1秒あたり20点。0.35秒差で70点(大波乱気配)に到達する目安。
+            score = int(diff_ex * 200)
+            reasons.append(f"展示最速:{best_ex_boat}号艇（1号艇比 +{diff_ex}秒）")
+    elif best_ex_boat != 1:
+        reasons.append(f"1号艇の展示タイム未公表（展示最速は{best_ex_boat}号艇）")
 
-    valid_lap = [(i + 1, b.get("lap_time")) for i, b in enumerate(boats) if b.get("lap_time")]
-    best_lap_boat = "-"
-    if valid_lap:
-        best_lap_boat_num, best_lap_val = min(valid_lap, key=lambda x: x[1])
-        best_lap_boat = str(best_lap_boat_num)
-
-        b1_lap = b1.get("lap_time")
-        if b1_lap:
-            diff_lap = round(b1_lap - best_lap_val, 2)
-            if best_lap_boat_num != 1:
-                score += int(diff_lap * 2000)
-                reasons.append(f"一周最速:{best_lap_boat_num}号艇")
-    else:
-        best_lap_boat = "未公表"
-
-    status_label = "イン堅調" if score < 30 else "波乱含み" if score < 70 else "大波乱気配🔥"
+    status_label = "イン堅調" if score < 20 else "波乱含み" if score < 50 else "大波乱気配🔥"
 
     return {
         "venue": venue_name, "race_no": rno, "deadline": deadline,
         "score": score, "status": status_label,
         "reasons": " / ".join(reasons) if reasons else "イン優勢",
-        "b1_ex": b1_ex if b1_ex else "-", "best_ex": f"{best_ex_boat}号({best_ex_val})",
-        "b1_lap": b1.get("lap_time", "-"), "best_lap": best_lap_boat,
+        "b1_ex": b1_ex if b1_ex is not None else "-",
+        "best_ex": f"{best_ex_boat}号({best_ex_val})" if best_ex_val is not None else "-",
+        "b1_lap": "-", "best_lap": "-",
     }
 
 

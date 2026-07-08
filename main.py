@@ -20,8 +20,8 @@ from line_notify import send_line_message, build_rough_race_message, LineNotifyE
 from state_store import load_state, save_state, race_key, is_notified, mark_notified
 
 # 通知を送るスコアの閾値。デフォルトは「大波乱気配🔥」ライン。
-# 環境変数 ROUGH_SCORE_THRESHOLD で上書き可能（例: 30 にすると「波乱含み」も拾う）
-SCORE_THRESHOLD = int(os.environ.get("ROUGH_SCORE_THRESHOLD", "70"))
+# 環境変数 ROUGH_SCORE_THRESHOLD で上書き可能（例: 20 にすると「波乱含み」も拾う）
+SCORE_THRESHOLD = int(os.environ.get("ROUGH_SCORE_THRESHOLD", "50"))
 
 # 対象日。省略時は当日（JST）。GitHub Actionsから TARGET_DATE=YYYYMMDD で指定可能。
 TARGET_DATE = os.environ.get("TARGET_DATE") or None

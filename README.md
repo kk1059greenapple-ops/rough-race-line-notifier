@@ -95,7 +95,8 @@ DRY_RUN=true python main.py
 
 ## 設定の調整
 
-- 通知しきい値: `main.py` の `ROUGH_SCORE_THRESHOLD` 環境変数（デフォルト70）。
+- 通知しきい値: `main.py` の `ROUGH_SCORE_THRESHOLD` 環境変数（デフォルト50 = 「大波乱気配🔥」ライン）。
+  展示タイム差0.1秒ごとに20点加算される単純な計算式。20〜49は「波乱含み」。
   ダッシュボードではスライダーで調整可能（表示のみ、実際の自動通知の閾値はActions側の設定）
 - 実行間隔・時間帯: `.github/workflows/rough_race_notify.yml` の `cron` を編集
 - 特定日をテストする場合: `TARGET_DATE=YYYYMMDD` 環境変数

@@ -40,7 +40,7 @@ try:
 except FileNotFoundError:
     pass
 
-DEFAULT_THRESHOLD = int(os.environ.get("ROUGH_SCORE_THRESHOLD", "70"))
+DEFAULT_THRESHOLD = int(os.environ.get("ROUGH_SCORE_THRESHOLD", "50"))
 
 st.title("🔥 荒れるレース検出ダッシュボード")
 st.caption(
@@ -52,8 +52,8 @@ with st.sidebar:
     st.header("設定")
     today_jst = datetime.now(JST).strftime("%Y%m%d")
     target_date = st.text_input("対象日 (YYYYMMDD)", value=today_jst)
-    threshold = st.slider("通知対象スコアのしきい値", min_value=0, max_value=150, value=DEFAULT_THRESHOLD, step=5)
-    st.caption("70以上 = 「大波乱気配🔥」目安。30〜69は「波乱含み」。")
+    threshold = st.slider("通知対象スコアのしきい値", min_value=0, max_value=100, value=DEFAULT_THRESHOLD, step=5)
+    st.caption("展示タイム差0.1秒ごとに20点。50以上=「大波乱気配🔥」目安、20〜49は「波乱含み」。")
     st.divider()
     token_ok = bool(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")) and bool(os.environ.get("LINE_USER_ID"))
     st.write("LINE連携: " + ("✅ 設定済み" if token_ok else "⚠️ 未設定（Secrets未登録）"))
@@ -100,10 +100,7 @@ else:
                 st.markdown(f"判定: **{race['status']}**（score {race['score']}）")
             with c2:
                 st.caption(f"理由: {race['reasons']}")
-                st.caption(
-                    f"1号艇展示:{race['b1_ex']} / 最速展示:{race['best_ex']} / "
-                    f"1号艇周回:{race['b1_lap']} / 最速周回:{race['best_lap']}号艇"
-                )
+                st.caption(f"1号艇展示タイム:{race['b1_ex']} / 最速展示タイム:{race['best_ex']}")
             with c3:
                 if not is_hot:
                     st.caption("しきい値未満")
