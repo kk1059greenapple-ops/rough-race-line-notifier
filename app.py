@@ -42,7 +42,7 @@ st.set_page_config(page_title="荒れるレース検出ダッシュボード", p
 # secrets.tomlが存在しない環境（ローカルで未設定の場合など）では
 # st.secrets へのアクセス自体が FileNotFoundError を出すため、握りつぶして継続する。
 try:
-    for key in ("LINE_CHANNEL_ACCESS_TOKEN", "LINE_USER_ID"):
+    for key in ("LINE_CHANNEL_ACCESS_TOKEN", "LINE_USER_ID", "LINE_BROADCAST"):
         if key not in os.environ and key in st.secrets:
             os.environ[key] = st.secrets[key]
 except FileNotFoundError:
