@@ -1,0 +1,47 @@
+name: Rough Race LINE Notifier
+
+on:
+  schedule:
+    # UTC 00:00-12:59 = JST 09:00-21:59 の間、5分おきに実行
+    - cron: "*/5 0-12 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true にするとLINE送信せずログ出力のみ行う"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rough-race-notifier
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install aiohttp beautifulsoup4 lxml requests
+
+      - name: Run rough race scanner
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: python main.py
+
+      - name: Commit updated notification state
+        run: |
+          git config user.name "rough-race-bot"
+          git config user.email "actions@github.com"
+          git add notified_races.json
+          git diff --cached --quiet || git commit -m "chore: update notified races state [skip ci]"
+          git push
