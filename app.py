@@ -31,9 +31,14 @@ st.set_page_config(page_title="荒れるレース検出ダッシュボード", p
 # Streamlit Cloudの st.secrets をLINE通知モジュールが読む環境変数に反映
 # （GitHub Actions側は Secrets を環境変数として直接渡すので、ここは
 #  Streamlit Cloud上で動かす場合のみ必要な橋渡し）
-for key in ("LINE_CHANNEL_ACCESS_TOKEN", "LINE_USER_ID"):
-    if key not in os.environ and key in st.secrets:
-        os.environ[key] = st.secrets[key]
+# secrets.tomlが存在しない環境（ローカルで未設定の場合など）では
+# st.secrets へのアクセス自体が FileNotFoundError を出すため、握りつぶして継続する。
+try:
+    for key in ("LINE_CHANNEL_ACCESS_TOKEN", "LINE_USER_ID"):
+        if key not in os.environ and key in st.secrets:
+            os.environ[key] = st.secrets[key]
+except FileNotFoundError:
+    pass
 
 DEFAULT_THRESHOLD = int(os.environ.get("ROUGH_SCORE_THRESHOLD", "70"))
 
