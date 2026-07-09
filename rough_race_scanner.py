@@ -38,6 +38,7 @@ from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
 from original_exhibition import fetch_original_exhibition, launch_browser
+from exhibition_corrections import corrected_value
 
 JST = timezone(timedelta(hours=9))
 
@@ -152,6 +153,22 @@ def _merge_boats(boats_official, boats_orig):
     return merged
 
 
+def _apply_course_correction(boats, venue_name):
+    """
+    コース位置による物理的な有利・不利（1号艇は旋回半径が小さく構造的に速いタイムが
+    出やすい／6号艇はその逆）を打ち消した補正後の値を持つリストを返す。
+    ランキング・差分計算はこちらを使い、ユーザー向けの表示には生の値（boats）を使う。
+    """
+    corrected = []
+    for i, b in enumerate(boats):
+        course = i + 1
+        c = dict(b)
+        for field in ("ex_time", "lap_time", "turn_time", "straight_time"):
+            c[field] = corrected_value(venue_name, course, field, b.get(field))
+        corrected.append(c)
+    return corrected
+
+
 def _rank_best_boat(boats, field):
     """指定フィールドで最速(最小値)の艇番号と値を返す。タイムは小さいほど良い前提。"""
     vals = [(i + 1, b.get(field)) for i, b in enumerate(boats) if b.get(field) is not None]
@@ -197,43 +214,53 @@ def calculate_full_roughness_score(boats_official, boats_orig, boats_rl, env, ve
     reasons = []
     score = VENUE_ROUGHNESS_MAP.get(venue_name, 16.0)
 
-    b1 = boats[0]
-    b1_ex, b1_lap = b1.get("ex_time"), b1.get("lap_time")
-    best_ex_boat, best_ex_val = _rank_best_boat(boats, "ex_time")
-    best_lap_boat, best_lap_val = _rank_best_boat(boats, "lap_time")
+    # ランキング・差分の判定は「コース位置による物理的な有利不利を補正した値」で行う。
+    # 1号艇は旋回半径が小さく構造的に速いタイムが出やすいため、生タイムのまま比較すると
+    # 実力差が無くても1号艇が有利に見えてしまう（逆に外枠は不利に見える）。
+    corrected_boats = _apply_course_correction(boats, venue_name)
 
-    # 展示タイム: 1号艇が最速でなければ、差分に応じて加点
-    if b1_ex is not None and best_ex_val is not None and best_ex_boat != 1:
-        diff_ex = round(b1_ex - best_ex_val, 2)
+    b1 = boats[0]  # 表示用は生の値（公式サイトの表示と一致させる）
+    b1_ex, b1_lap = b1.get("ex_time"), b1.get("lap_time")
+
+    b1c = corrected_boats[0]
+    b1_ex_c, b1_lap_c = b1c.get("ex_time"), b1c.get("lap_time")
+    best_ex_boat, best_ex_val_c = _rank_best_boat(corrected_boats, "ex_time")
+    best_lap_boat, best_lap_val_c = _rank_best_boat(corrected_boats, "lap_time")
+    best_ex_val = boats[best_ex_boat - 1].get("ex_time") if best_ex_boat else None
+    best_lap_val = boats[best_lap_boat - 1].get("lap_time") if best_lap_boat else None
+
+    # 展示タイム（補正後）: 1号艇が最速でなければ、差分に応じて加点
+    if b1_ex_c is not None and best_ex_val_c is not None and best_ex_boat != 1:
+        diff_ex = round(b1_ex_c - best_ex_val_c, 2)
         if diff_ex > 0:
             score += diff_ex * 20
-            reasons.append(f"展示最速:{best_ex_boat}号艇（1号艇比+{diff_ex}秒）")
+            reasons.append(f"展示最速(コース補正後):{best_ex_boat}号艇（1号艇比+{diff_ex}秒）")
 
-    # 一周タイム: 展示タイムより重み付けを大きくする（元アプリのrough_race_finder.pyと同じ考え方）
-    if b1_lap is not None and best_lap_val is not None and best_lap_boat != 1:
-        diff_lap = round(b1_lap - best_lap_val, 2)
+    # 一周タイム（補正後）: 展示タイムより重み付けを大きくする
+    if b1_lap_c is not None and best_lap_val_c is not None and best_lap_boat != 1:
+        diff_lap = round(b1_lap_c - best_lap_val_c, 2)
         if diff_lap > 0:
             score += diff_lap * 30
-            reasons.append(f"一周最速:{best_lap_boat}号艇（1号艇比+{diff_lap}秒）")
+            reasons.append(f"一周最速(コース補正後):{best_lap_boat}号艇（1号艇比+{diff_lap}秒）")
 
-    # 1号艇の展示/一周ランクが4位以下
-    rank_ex = _rank_of_boat1(boats, "ex_time")
-    rank_lap = _rank_of_boat1(boats, "lap_time")
+    # 1号艇の展示/一周ランクが4位以下（補正後の順位で判定）
+    rank_ex = _rank_of_boat1(corrected_boats, "ex_time")
+    rank_lap = _rank_of_boat1(corrected_boats, "lap_time")
     if (rank_ex and rank_ex >= 4) or (rank_lap and rank_lap >= 4):
         score += 12
         worst_rank = max(r for r in (rank_ex, rank_lap) if r)
-        reasons.append(f"1号艇の展示/一周ランクが{worst_rank}位")
+        reasons.append(f"1号艇の展示/一周ランク(コース補正後)が{worst_rank}位")
 
-    # 外枠(3-6号艇)がいずれかの指標で一番時計
+    # 外枠(3-6号艇)がいずれかの指標で一番時計（補正後）
     outside_best = False
     for field in ("ex_time", "lap_time", "turn_time", "straight_time"):
-        boat_num, _ = _rank_best_boat(boats, field)
+        boat_num, _ = _rank_best_boat(corrected_boats, field)
         if boat_num and boat_num >= 3:
             outside_best = True
             break
     if outside_best:
         score += 15
-        reasons.append("外枠(3-6号艇)がタイム系で一番時計")
+        reasons.append("外枠(3-6号艇)がタイム系(コース補正後)で一番時計")
 
     # 選手戦績（出走表: 級別・全国勝率・モーター2連率・フライング歴）
     if has_rl:
@@ -270,6 +297,56 @@ def calculate_full_roughness_score(boats_official, boats_orig, boats_rl, env, ve
             if outer_motor_hot:
                 score += 10
                 reasons.append(f"モーター好調な外枠あり: {'/'.join(str(n)+'号艇' for n in outer_motor_hot)}")
+
+        # 今節（当該開催）ここ数走の着順＝過去の戦績。1号艇の平均着順が悪いほど加点、
+        # 他艇に絶好調（平均着順が良い）艇がいればさらに加点する
+        # （racelist_scanner.calculate_pre_race_score と同じ考え方を直前スキャンにも反映）
+        b1_recent = b1_rl.get("recent_ranks") or []
+        if b1_recent:
+            b1_avg_rank = round(sum(b1_recent) / len(b1_recent), 1)
+            if b1_avg_rank > 3.0:
+                score += (b1_avg_rank - 3.0) * 10
+                reasons.append(f"1号艇今節平均着順:{b1_avg_rank}位（{len(b1_recent)}走）")
+
+        other_avgs = []
+        for i, b in enumerate(boats_rl):
+            if i == 0 or not b:
+                continue
+            ranks = b.get("recent_ranks") or []
+            if ranks:
+                other_avgs.append((i + 1, round(sum(ranks) / len(ranks), 1)))
+        if other_avgs:
+            hot_boat, hot_avg = min(other_avgs, key=lambda x: x[1])
+            if hot_avg <= 2.0:
+                score += (2.5 - hot_avg) * 8
+                reasons.append(f"今節絶好調:{hot_boat}号艇（平均{hot_avg}位）")
+
+        # オッズ的な「本当の荒れやすさ」補正。ボートレースはA1級など実績のある選手が
+        # 枠に関係なく売れやすい（＝1号艇でなくても勝てば必ずしも高配当にならない）。
+        # 逆に全国勝率が低い（無名・下級）選手が好走している場合は、投票側の予想と
+        # 実際の決まり手が乖離しやすく、真の意味でオッズが荒れやすい。
+        # ここでは「1号艇以外で最も好走している対抗馬」（コース補正後の一周/展示タイムが
+        # 最速の艇）の過去の実績（全国勝率）をもとに、これまでの加点を人気度で補正する。
+        rival_boat = best_lap_boat or best_ex_boat
+        if rival_boat and rival_boat != 1 and len(boats_rl) >= rival_boat:
+            rival_rl = boats_rl[rival_boat - 1]
+            rival_win = rival_rl.get("national_win") if rival_rl else None
+            if rival_win is not None:
+                # 全国勝率5.0を「平均的な人気度」の基準とし、そこからの乖離を得点化。
+                # 上限・下限は±15点にクリップして極端な影響を避ける。
+                popularity_adjust = max(-15.0, min((5.0 - rival_win) * 6, 15.0))
+                if popularity_adjust <= -3:
+                    score += popularity_adjust
+                    reasons.append(
+                        f"対抗馬{rival_boat}号艇は全国勝率{rival_win}と実績十分で人気を集めやすく、"
+                        f"オッズは荒れにくい可能性"
+                    )
+                elif popularity_adjust >= 3:
+                    score += popularity_adjust
+                    reasons.append(
+                        f"対抗馬{rival_boat}号艇は全国勝率{rival_win}と無名級で、"
+                        f"オッズが荒れやすい可能性"
+                    )
 
     # 風・波・安定板
     if env:
