@@ -1,4 +1,65 @@
 {
-  "date": "",
-  "races": {}
+  "date": "20260709",
+  "races": {
+    "20260709_多摩川_1R": {
+      "venue": "多摩川",
+      "race_no": 1,
+      "deadline": "11:33",
+      "score": 30,
+      "status": "波乱含み",
+      "reasons": "展示最速:2号艇（1号艇比 +0.15秒）",
+      "b1_ex": 6.76,
+      "best_ex": "2号(6.61)",
+      "b1_lap": "-",
+      "best_lap": "-"
+    },
+    "20260709_戸田_3R": {
+      "venue": "戸田",
+      "race_no": 3,
+      "deadline": "11:28",
+      "score": 24,
+      "status": "波乱含み",
+      "reasons": "展示最速:2号艇（1号艇比 +0.12秒）",
+      "b1_ex": 6.79,
+      "best_ex": "2号(6.67)",
+      "b1_lap": "-",
+      "best_lap": "-"
+    },
+    "20260709_常滑_3R": {
+      "venue": "常滑",
+      "race_no": 3,
+      "deadline": "11:36",
+      "score": 22,
+      "status": "波乱含み",
+      "reasons": "展示最速:4号艇（1号艇比 +0.11秒）",
+      "b1_ex": 6.73,
+      "best_ex": "4号(6.62)",
+      "b1_lap": "-",
+      "best_lap": "-"
+    },
+    "20260709_びわこ_3R": {
+      "venue": "びわこ",
+      "race_no": 3,
+      "deadline": "11:38",
+      "score": 0,
+      "status": "イン堅調",
+      "reasons": "イン優勢",
+      "b1_ex": 6.87,
+      "best_ex": "1号(6.87)",
+      "b1_lap": "-",
+      "best_lap": "-"
+    },
+    "20260709_鳴門_7R": {
+      "venue": "鳴門",
+      "race_no": 7,
+      "deadline": "11:31",
+      "score": 0,
+      "status": "イン堅調",
+      "reasons": "イン優勢",
+      "b1_ex": 6.78,
+      "best_ex": "1号(6.78)",
+      "b1_lap": "-",
+      "best_lap": "-"
+    }
+  }
 }
