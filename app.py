@@ -28,8 +28,9 @@ from racelist_scanner import scan_all_races_today
 from line_notify import send_line_message, build_rough_race_message, build_daily_preview_message, LineNotifyError
 from state_store import (
     load_state, save_state, race_key, is_notified, mark_notified,
-    load_daily_summary, daily_races_sorted,
+    load_daily_summary, daily_races_sorted, load_settings, save_settings, SETTINGS_FILE,
 )
+from github_settings_sync import push_settings_to_github, GitHubSyncError
 
 JST = timezone(timedelta(hours=9))
 nest_asyncio.apply()
@@ -42,13 +43,17 @@ st.set_page_config(page_title="荒れるレース検出ダッシュボード", p
 # secrets.tomlが存在しない環境（ローカルで未設定の場合など）では
 # st.secrets へのアクセス自体が FileNotFoundError を出すため、握りつぶして継続する。
 try:
-    for key in ("LINE_CHANNEL_ACCESS_TOKEN", "LINE_USER_ID", "LINE_BROADCAST"):
+    for key in ("LINE_CHANNEL_ACCESS_TOKEN", "LINE_USER_ID", "LINE_BROADCAST", "GITHUB_PAT", "GITHUB_REPO"):
         if key not in os.environ and key in st.secrets:
             os.environ[key] = st.secrets[key]
 except FileNotFoundError:
     pass
 
-DEFAULT_THRESHOLD = int(os.environ.get("ROUGH_SCORE_THRESHOLD", "60"))
+_settings = load_settings()
+if os.path.exists(SETTINGS_FILE):
+    DEFAULT_THRESHOLD = int(_settings.get("score_threshold", 60))
+else:
+    DEFAULT_THRESHOLD = int(os.environ.get("ROUGH_SCORE_THRESHOLD", "60"))
 TODAY_JST = datetime.now(JST).strftime("%Y%m%d")
 
 st.title("🔥 荒れるレース検出ダッシュボード")
@@ -59,6 +64,30 @@ with st.sidebar:
     st.divider()
     token_ok = bool(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")) and bool(os.environ.get("LINE_USER_ID"))
     st.write("LINE連携: " + ("✅ 設定済み" if token_ok else "⚠️ 未設定（Secrets未登録）"))
+
+    st.divider()
+    st.subheader("自動通知のしきい値")
+    st.caption("15分おきの自動LINE通知（GitHub Actions）が使うしきい値をここから変更できます。")
+    github_ok = bool(os.environ.get("GITHUB_PAT"))
+    st.write("GitHub連携: " + ("✅ 設定済み" if github_ok else "⚠️ 未設定（GITHUB_PAT未登録）"))
+    new_threshold = st.number_input(
+        "自動通知しきい値", min_value=0, max_value=100, value=DEFAULT_THRESHOLD, step=5, key="auto_threshold_input"
+    )
+    if st.button("💾 保存してGitHubに反映", key="save_threshold_btn", disabled=not github_ok):
+        try:
+            updated = dict(_settings)
+            updated["score_threshold"] = int(new_threshold)
+            save_settings(updated)
+            push_settings_to_github(updated)
+            st.success(f"しきい値を{int(new_threshold)}に更新しました。次回の自動実行から反映されます。")
+        except GitHubSyncError as e:
+            st.error(f"GitHubへの反映に失敗しました: {e}")
+    if not github_ok:
+        st.caption(
+            "GitHubのこのリポジトリへのContents(Read and write)権限を持つ"
+            "Personal Access Tokenを発行し、StreamlitのSecretsに`GITHUB_PAT`として"
+            "登録すると、ここから自動通知のしきい値を変更できるようになります。"
+        )
 
 tab_live, tab_preview, tab_history = st.tabs(["🔎 直前スキャン", "🌅 事前予想（全レース）", "📋 本日の検出履歴"])
 

@@ -20,6 +20,9 @@ import os
 STATE_FILE = os.path.join(os.path.dirname(__file__), "notified_races.json")
 DAILY_SUMMARY_FILE = os.path.join(os.path.dirname(__file__), "daily_summary.json")
 PREVIEW_STATE_FILE = os.path.join(os.path.dirname(__file__), "daily_preview_sent.json")
+SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "settings.json")
+
+DEFAULT_SETTINGS = {"score_threshold": 60}
 
 
 def _empty_state(date_hd: str) -> dict:
@@ -116,3 +119,26 @@ def already_sent_preview(date_hd: str) -> bool:
 def mark_preview_sent(date_hd: str) -> None:
     with open(PREVIEW_STATE_FILE, "w", encoding="utf-8") as f:
         json.dump({"date": date_hd}, f, ensure_ascii=False, indent=2)
+
+
+# --- 自動通知のしきい値等の設定（settings.json） ---------------------------
+# ダッシュボード（app.py）から変更し、GitHub Contents APIでリポジトリに反映すると、
+# 次回以降のGitHub Actions実行（main.py）がこの値を使うようになる。
+# settings.jsonが無い/読めない場合はDEFAULT_SETTINGSにフォールバックする。
+
+def load_settings() -> dict:
+    if not os.path.exists(SETTINGS_FILE):
+        return dict(DEFAULT_SETTINGS)
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            settings = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return dict(DEFAULT_SETTINGS)
+    merged = dict(DEFAULT_SETTINGS)
+    merged.update(settings or {})
+    return merged
+
+
+def save_settings(settings: dict) -> None:
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
