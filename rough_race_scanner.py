@@ -1,7 +1,7 @@
 """
 rough_race_scanner.py
 
-全24会場を横断して「締切間際（-3分〜+15分）」のレースを検出し、
+全24会場を横断して「締切前15分以内（締切を過ぎたレースは対象外）」のレースを検出し、
 公式サイトの展示タイムに加えて、一周・まわり足・直線タイム（オリジナル展示、
 original_exhibition.py経由）、風速・風向・波高・安定板、出走表の選手戦績
 （racelist_scanner.py経由: 級別・全国勝率・モーター2連率・フライング歴）を
@@ -376,10 +376,11 @@ def calculate_full_roughness_score(boats_official, boats_orig, boats_rl, env, ve
     }
 
 
-async def find_rough_races_today(target_date=None, window_before_min=15, window_after_min=3):
+async def find_rough_races_today(target_date=None, window_before_min=15, window_after_min=0):
     """
-    全会場を巡回し、締切が window_after_min 分前 〜 window_before_min 分後
+    全会場を巡回し、締切まで window_before_min 分以内（まだ締切を迎えていないレースのみ）
     の範囲にあるレースの直前情報を取得してスコアリングする。
+    締切を過ぎたレース（投票締切後）は対象外にする。
 
     target_date: "YYYYMMDD" 形式（JST）。省略時は現在のJST日付。
     戻り値: (results, date_hd, status)
