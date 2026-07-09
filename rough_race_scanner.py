@@ -2,18 +2,31 @@
 rough_race_scanner.py
 
 全24会場を横断して「締切間際（-3分〜+15分）」のレースを検出し、
-直前展示情報（展示タイム／周回タイム）から荒れ度スコアを算出するモジュール。
+公式サイトの展示タイムに加えて、一周・まわり足・直線タイム（オリジナル展示、
+original_exhibition.py経由）、風速・風向・波高・安定板、出走表の選手戦績
+（racelist_scanner.py経由: 級別・全国勝率・モーター2連率・フライング歴）を
+総合して荒れ度スコアを算出するモジュール。
 
-既存の app.py 内蔵の rough_race_finder.py（Streamlit UIから手動実行される版）の
-検出ロジックを土台にしているが、本モジュールは以下の点を変更した独立版:
+既存の app.py 内蔵の rough_race_finder.py（Streamlit UIから手動実行される版）や、
+app.py 本体の calculate_dynamic_roughness() / calculate_oracle() の考え方
+（会場別の荒れやすさベース値 + 各種補正の加減算）を踏襲しつつ、
+GitHub Actions上で自動実行できる形に移植したもの。
 
-- Playwright/ブラウザ操作には依存しない（aiohttp + BeautifulSoup のみ）
+このモジュールは以下の点を元のapp.pyから変更している:
+- boatrace.jp公式サイトのスキャン自体はaiohttp + BeautifulSoupのみ（Playwright不要）
+- オリジナル展示（一周/まわり足/直線タイム）・風速風向・波高・安定板の取得のみ、
+  boaters-boatrace.com を対象にPlaywrightを使用する（公式サイトには存在しないため）
+- 選手の戦績（級別・全国勝率・モーター成績・フライング歴）はboaters-boatrace.comの
+  複雑なテキスト解析ではなく、公式サイトの出走表を解析する racelist_scanner.py の
+  実装を再利用する（より確実で、事前予想モードと同じデータ源のため一貫性がある）
+- オッズとの乖離判定（AI予想 vs 市場人気のズレ）は、オッズスクレイピングと
+  選手データベースの突合が必要な別系統の重い処理のため対象外としている
 - サーバー実行環境が UTC でも正しく動くよう、時刻計算をすべて JST 明示に修正
   （元のコードは datetime.now() のみでサーバーがUTCだと9時間ズレるバグがあった）
 - Streamlit（st.*）依存を完全に排除し、GitHub Actions等の非対話環境で単独実行可能
 
 このモジュールは app.py・rough_race_finder.py を一切変更せず、
-新規フォルダ line_notifier/ 配下の独立システムとして動作する。
+新規フォルダ rough_race_notifier_app/ 配下の独立システムとして動作する。
 """
 
 import asyncio
@@ -22,8 +35,20 @@ from datetime import datetime, timedelta, timezone
 
 import aiohttp
 from bs4 import BeautifulSoup
+from playwright.async_api import async_playwright
+
+from original_exhibition import fetch_original_exhibition, launch_browser
 
 JST = timezone(timedelta(hours=9))
+
+# 過去1年間の統計ベースの会場別「荒れる度」ベース値（万舟率等、app.pyのVENUE_ROUGHNESS_MAPと同一）
+VENUE_ROUGHNESS_MAP = {
+    "桐生": 16.2, "戸田": 19.8, "江戸川": 18.5, "平和島": 19.2, "多摩川": 16.5,
+    "浜名湖": 15.8, "蒲郡": 14.2, "常滑": 15.5, "津": 16.8, "三国": 16.3,
+    "びわこ": 17.5, "住之江": 13.8, "尼崎": 14.5, "鳴門": 18.8, "丸亀": 15.2,
+    "児島": 15.1, "宮島": 16.7, "徳山": 12.2, "下関": 13.5, "若松": 14.1,
+    "芦屋": 13.2, "福岡": 17.8, "唐津": 14.5, "大村": 11.2,
+}
 
 # 開催場コードマッピング
 VENUE_NAMES = {
@@ -109,38 +134,158 @@ def parse_exhibition_data(html):
     return boats
 
 
-def calculate_roughness_score(boats, venue_name, rno, deadline):
+def _merge_boats(boats_official, boats_orig):
+    """公式サイトの展示タイム(boats_official)とオリジナル展示(boats_orig)をマージする。
+    一周/まわり足/直線タイムはオリジナル展示にしかないため、あれば必ず採用。
+    展示タイムはオリジナル展示側の値を優先し、無ければ公式サイト側で補う。
     """
-    1号艇の展示タイムが他艇（特に最速艇）と比べてどれだけ見劣りするかでスコア化する。
-    展示タイムのみが実際に取得できる指標のため（一周タイム等はboatrace.jpの
-    直前情報ページには存在しない）、判定はこの1指標に基づく単純なものにしている。
-    """
-    if not boats:
+    merged = []
+    for i in range(6):
+        m = {}
+        off = (boats_official or [{}] * 6)[i] if boats_official else {}
+        orig = (boats_orig or [{}] * 6)[i] if boats_orig else {}
+        m["ex_time"] = orig.get("ex_time") if orig.get("ex_time") is not None else off.get("ex_time")
+        m["lap_time"] = orig.get("lap_time")
+        m["turn_time"] = orig.get("turn_time")
+        m["straight_time"] = orig.get("straight_time")
+        merged.append(m)
+    return merged
+
+
+def _rank_best_boat(boats, field):
+    """指定フィールドで最速(最小値)の艇番号と値を返す。タイムは小さいほど良い前提。"""
+    vals = [(i + 1, b.get(field)) for i, b in enumerate(boats) if b.get(field) is not None]
+    if not vals:
+        return None, None
+    return min(vals, key=lambda x: x[1])
+
+
+def _rank_of_boat1(boats, field):
+    """全艇中での1号艇の順位（1=最速）を返す。値が無ければNone。"""
+    vals = [(i + 1, b.get(field)) for i, b in enumerate(boats) if b.get(field) is not None]
+    if not vals or boats[0].get(field) is None:
         return None
+    vals.sort(key=lambda x: x[1])
+    for rank, (boat_num, _) in enumerate(vals, start=1):
+        if boat_num == 1:
+            return rank
+    return None
 
-    b1 = boats[0]
-    b1_ex = b1.get("ex_time")
-    score = 0
-    reasons = []
 
-    valid_ex = [(i + 1, b.get("ex_time")) for i, b in enumerate(boats) if b.get("ex_time")]
-    if not valid_ex:
+def calculate_full_roughness_score(boats_official, boats_orig, boats_rl, env, venue_name, rno, deadline):
+    """
+    公式サイトの展示タイム、一周・まわり足・直線タイム（オリジナル展示）、
+    風速・風向・波高・安定板、出走表の選手戦績（級別・全国勝率・モーター2連率・
+    フライング歴）を総合して荒れ度スコアを算出する。
+
+    元の予想アプリ（app.py）の calculate_dynamic_roughness() が採用している
+    「会場別の荒れやすさベース値 + 各種シグナルの加減算」という設計を踏襲。
+    オッズとの乖離判定（AI予想 vs 市場人気）はオッズスクレイピング等が必要な
+    別系統の処理のため対象外。
+    """
+    boats = _merge_boats(boats_official, boats_orig)
+    has_any_time = any(b.get("ex_time") is not None for b in boats)
+    has_rl = bool(boats_rl) and boats_rl[0] is not None
+
+    if not has_any_time and not has_rl:
         return {
             "venue": venue_name, "race_no": rno, "deadline": deadline,
             "score": 0, "status": "データ収集中", "reasons": "展示タイム未公表",
             "b1_ex": "-", "best_ex": "-", "b1_lap": "-", "best_lap": "-",
         }
 
-    best_ex_boat, best_ex_val = min(valid_ex, key=lambda x: x[1])
-    if b1_ex is not None:
-        diff_ex = round(b1_ex - best_ex_val, 2)
-        if best_ex_boat != 1 and diff_ex > 0:
-            # 展示タイム差0.1秒あたり20点。0.35秒差で70点(大波乱気配)に到達する目安。
-            score = int(diff_ex * 200)
-            reasons.append(f"展示最速:{best_ex_boat}号艇（1号艇比 +{diff_ex}秒）")
-    elif best_ex_boat != 1:
-        reasons.append(f"1号艇の展示タイム未公表（展示最速は{best_ex_boat}号艇）")
+    reasons = []
+    score = VENUE_ROUGHNESS_MAP.get(venue_name, 16.0)
 
+    b1 = boats[0]
+    b1_ex, b1_lap = b1.get("ex_time"), b1.get("lap_time")
+    best_ex_boat, best_ex_val = _rank_best_boat(boats, "ex_time")
+    best_lap_boat, best_lap_val = _rank_best_boat(boats, "lap_time")
+
+    # 展示タイム: 1号艇が最速でなければ、差分に応じて加点
+    if b1_ex is not None and best_ex_val is not None and best_ex_boat != 1:
+        diff_ex = round(b1_ex - best_ex_val, 2)
+        if diff_ex > 0:
+            score += diff_ex * 20
+            reasons.append(f"展示最速:{best_ex_boat}号艇（1号艇比+{diff_ex}秒）")
+
+    # 一周タイム: 展示タイムより重み付けを大きくする（元アプリのrough_race_finder.pyと同じ考え方）
+    if b1_lap is not None and best_lap_val is not None and best_lap_boat != 1:
+        diff_lap = round(b1_lap - best_lap_val, 2)
+        if diff_lap > 0:
+            score += diff_lap * 30
+            reasons.append(f"一周最速:{best_lap_boat}号艇（1号艇比+{diff_lap}秒）")
+
+    # 1号艇の展示/一周ランクが4位以下
+    rank_ex = _rank_of_boat1(boats, "ex_time")
+    rank_lap = _rank_of_boat1(boats, "lap_time")
+    if (rank_ex and rank_ex >= 4) or (rank_lap and rank_lap >= 4):
+        score += 12
+        worst_rank = max(r for r in (rank_ex, rank_lap) if r)
+        reasons.append(f"1号艇の展示/一周ランクが{worst_rank}位")
+
+    # 外枠(3-6号艇)がいずれかの指標で一番時計
+    outside_best = False
+    for field in ("ex_time", "lap_time", "turn_time", "straight_time"):
+        boat_num, _ = _rank_best_boat(boats, field)
+        if boat_num and boat_num >= 3:
+            outside_best = True
+            break
+    if outside_best:
+        score += 15
+        reasons.append("外枠(3-6号艇)がタイム系で一番時計")
+
+    # 選手戦績（出走表: 級別・全国勝率・モーター2連率・フライング歴）
+    if has_rl:
+        b1_rl = boats_rl[0] or {}
+        b1_class = b1_rl.get("class")
+        if b1_class in ("B1", "B2"):
+            score += 12
+            reasons.append(f"1号艇級別:{b1_class}")
+
+        # 全国勝率は0.00〜8.00程度の評価点スケール（％ではない。例: A1上位は6〜7台、
+        # B2は3台前後が目安）。boatrace.jpの出走表「全国」列の1つ目の数値がこれに当たる。
+        b1_win = b1_rl.get("national_win")
+        if b1_win is not None and b1_win < 5.0:
+            score += 10
+            reasons.append(f"1号艇全国勝率:{b1_win}（平均以下）")
+
+        win_rates = [(i + 1, b.get("national_win")) for i, b in enumerate(boats_rl) if b and b.get("national_win") is not None]
+        if win_rates and b1_win is not None:
+            outer_best_boat, outer_best_win = max(
+                ((n, w) for n, w in win_rates if n != 1), key=lambda x: x[1], default=(None, None)
+            )
+            if outer_best_boat and outer_best_win > b1_win + 1.0:
+                score += 12
+                reasons.append(f"{outer_best_boat}号艇の全国勝率が1号艇より高い（{outer_best_win} vs {b1_win}）")
+
+        if b1_rl.get("f_count", 0) > 0:
+            score += 5
+            reasons.append(f"1号艇F{b1_rl['f_count']}前歴あり")
+
+        motor_rates = [(i + 1, b.get("motor_2rate")) for i, b in enumerate(boats_rl) if b and b.get("motor_2rate") is not None]
+        b1_motor = b1_rl.get("motor_2rate")
+        if b1_motor is not None and b1_motor < 30.0 and motor_rates:
+            outer_motor_hot = [n for n, m in motor_rates if n != 1 and m >= 40.0]
+            if outer_motor_hot:
+                score += 10
+                reasons.append(f"モーター好調な外枠あり: {'/'.join(str(n)+'号艇' for n in outer_motor_hot)}")
+
+    # 風・波・安定板
+    if env:
+        wind_spd = env.get("wind_spd") or 0.0
+        wave = env.get("wave")
+        if wind_spd >= 5.0:
+            score += 10
+            reasons.append(f"強風 {wind_spd}m")
+        if wave is not None and wave >= 5.0:
+            score += 10
+            reasons.append(f"波高 {wave}cm")
+        if env.get("anteiban"):
+            score -= 15
+            reasons.append("安定板使用")
+
+    score = round(max(5.0, min(score, 98.5)))
     status_label = "イン堅調" if score < 20 else "波乱含み" if score < 50 else "大波乱気配🔥"
 
     return {
@@ -149,7 +294,8 @@ def calculate_roughness_score(boats, venue_name, rno, deadline):
         "reasons": " / ".join(reasons) if reasons else "イン優勢",
         "b1_ex": b1_ex if b1_ex is not None else "-",
         "best_ex": f"{best_ex_boat}号({best_ex_val})" if best_ex_val is not None else "-",
-        "b1_lap": "-", "best_lap": "-",
+        "b1_lap": b1_lap if b1_lap is not None else "-",
+        "best_lap": f"{best_lap_boat}号({best_lap_val})" if best_lap_val is not None else "-",
     }
 
 
@@ -213,18 +359,51 @@ async def find_rough_races_today(target_date=None, window_before_min=15, window_
                             f"https://www.boatrace.jp/owpc/pc/race/beforeinfo"
                             f"?rno={rno}&jcd={v['jcd']}&hd={v['hd']}"
                         )
-                        target_urls.append((url_before, v["name"], rno, deadline_str))
+                        url_racelist = (
+                            f"https://www.boatrace.jp/owpc/pc/race/racelist"
+                            f"?rno={rno}&jcd={v['jcd']}&hd={v['hd']}"
+                        )
+                        target_urls.append((url_before, url_racelist, v["name"], rno, deadline_str))
                 except Exception:
                     continue
 
         if not target_urls:
             return [], date_hd, "no_timing"
 
-        before_htmls = await asyncio.gather(*[fetch_html(session, u[0], semaphore) for u in target_urls])
+        # 遅延importで racelist_scanner <-> rough_race_scanner の循環importを回避
+        from racelist_scanner import parse_racelist
+
+        before_htmls = await asyncio.gather(
+            *[fetch_html(session, t[0], semaphore) for t in target_urls]
+        )
+        racelist_htmls = await asyncio.gather(
+            *[fetch_html(session, t[1], semaphore) for t in target_urls]
+        )
+
+        # オリジナル展示（一周/まわり足/直線タイム・風・波・安定板）はPlaywright必須。
+        # 対象レースが取れなかった場合はスキップし、公式サイトの情報のみで判定する。
+        orig_results = [(None, None)] * len(target_urls)
+        try:
+            async with async_playwright() as pw:
+                browser = await launch_browser(pw)
+                try:
+                    pw_semaphore = asyncio.Semaphore(3)
+                    orig_results = await asyncio.gather(*[
+                        fetch_original_exhibition(browser, t[2], date_hd, t[3], pw_semaphore)
+                        for t in target_urls
+                    ])
+                finally:
+                    await browser.close()
+        except Exception:
+            pass
+
         results = []
-        for (url, v_name, rno, dl), html in zip(target_urls, before_htmls):
-            boats_data = parse_exhibition_data(html)
-            info = calculate_roughness_score(boats_data, v_name, rno, dl)
+        for (url_before, url_rl, v_name, rno, dl), before_html, rl_html, (boats_orig, env) in zip(
+            target_urls, before_htmls, racelist_htmls, orig_results
+        ):
+            boats_official = parse_exhibition_data(before_html)
+            boats_rl = parse_racelist(rl_html)
+            info = calculate_full_roughness_score(boats_official, boats_orig, boats_rl, env, v_name, rno, dl)
             if info:
                 results.append(info)
 

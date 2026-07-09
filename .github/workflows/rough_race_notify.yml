@@ -30,7 +30,11 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install aiohttp beautifulsoup4 lxml requests
+        run: pip install aiohttp beautifulsoup4 lxml requests playwright
+
+      - name: Install Playwright Chromium
+        # 一周・まわり足・直線タイム（オリジナル展示）と風速・波高の取得に必要
+        run: playwright install --with-deps chromium
 
       - name: Run rough race scanner
         env:

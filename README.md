@@ -6,9 +6,13 @@
 ## 構成
 
 - `app.py` — Streamlit製のダッシュボード（3タブ構成、詳細は下記「3つのモード」参照）
-- `rough_race_scanner.py` — 全24会場を巡回し、締切間際レースを展示タイムでスコアリングする検出ロジック
+- `rough_race_scanner.py` — 全24会場を巡回し、締切間際レースを展示タイム・一周/まわり足/
+  直線タイム・風・選手戦績で総合スコアリングする検出ロジック
+- `original_exhibition.py` — 一周・まわり足・直線タイム（オリジナル展示）、風速・風向・波高・
+  安定板を boaters-boatrace.com から取得するモジュール（boatrace.jp公式には無い情報のため、
+  ここだけPlaywrightでブラウザ操作する）
 - `racelist_scanner.py` — 出走表（全国勝率・モーター成績・級別・今節成績＝過去の戦績）から
-  終日レースを事前ランキングするロジック
+  終日レースを事前ランキングするロジック（直前スキャンの選手戦績判定にも流用）
 - `main.py` — 直前情報ベースの随時LINE通知（締切15分前後、15分おき）
 - `main_daily_preview.py` — 事前予想モードの日次ダイジェストLINE通知（1日1回、朝）
 - `line_notify.py` — LINE Messaging API push送信
@@ -24,8 +28,14 @@
 
 ## 3つのモード（ダッシュボードのタブ）
 
-1. **🔎 直前スキャン** — 締切15分前後のレースの展示タイムから荒れ度を判定（従来機能）。
+1. **🔎 直前スキャン** — 締切15分前後のレースを、展示タイムに加えて一周・まわり足・直線タイム
+   （オリジナル展示）、風速・風向・波高・安定板使用、出走表の選手戦績（級別・全国勝率・
+   モーター2連率・フライング歴）から総合的に荒れ度を判定（会場別の統計ベース値からの
+   加減算方式。元の予想アプリ`app.py`のcalculate_dynamic_roughness()の考え方を移植）。
    `main.py`による自動LINE通知（15分おき）もこのロジックを使用。
+   一周・まわり足・直線タイムはboatrace.jp公式には無いためPlaywrightでboaters-boatrace.com
+   から取得しており、他モードより実行に時間がかかる（1レースあたり数秒〜十数秒程度）。
+   江戸川・多摩川・津の3場はオリジナル展示非公表のため展示タイムのみで判定する。
 2. **🌅 事前予想（全レース）** — 展示タイムを待たず、出走表の全国勝率・モーター成績・
    級別・フライング歴・**今節（当該開催）ここ数走の着順＝過去の戦績**から、
    今日開催される全レースを「荒れそうな順」にランキング。
@@ -131,6 +141,7 @@ LINE_USER_ID = "Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 ```bash
 pip install -r requirements.txt
+playwright install chromium   # 直前スキャンのオリジナル展示取得に必要（初回のみ）
 export LINE_CHANNEL_ACCESS_TOKEN=xxxx
 export LINE_USER_ID=Uxxxx
 streamlit run app.py
@@ -146,7 +157,8 @@ DRY_RUN=true python main_daily_preview.py    # 事前予想の日次ダイジェ
 ## 設定の調整
 
 - 直前通知のしきい値: `main.py` の `ROUGH_SCORE_THRESHOLD` 環境変数（デフォルト60）。
-  展示タイム差0.1秒ごとに20点加算される単純な計算式。score 50以上が「大波乱気配🔥」の目安、20〜49は「波乱含み」。
+  会場別の統計ベース値（5〜20点程度）に、展示/一周タイム差・風波・選手戦績の各シグナルを
+  加減算して算出（5〜98.5にクリップ）。score 50以上が「大波乱気配🔥」の目安、20〜49は「波乱含み」。
   ダッシュボードではスライダーで調整可能（表示のみ、実際の自動通知の閾値はActions側の設定）
 - 事前予想通知のしきい値: `main_daily_preview.py` の `PRE_RACE_SCORE_THRESHOLD` 環境変数
   （デフォルト45 = 「波乱注意🔥」ライン）
@@ -164,3 +176,8 @@ DRY_RUN=true python main_daily_preview.py    # 事前予想の日次ダイジェ
   `rough_race_scanner.py` / `racelist_scanner.py` の調整が必要になる可能性があります
 - 事前予想モードはあくまで公表済みの成績データに基づく統計的な目安であり、
   展示タイムのような直前の実測値は反映されていません
+- 直前スキャンはboaters-boatrace.com（オリジナル展示データの取得元）にもPlaywright経由で
+  アクセスするため、boatrace.jp公式サイトの構造変更だけでなく、boaters-boatrace.com側の
+  UI変更やアクセス制限の影響も受けやすい点に注意（取得失敗時は展示タイムのみで判定を継続する）
+- GitHub ActionsではPlaywrightのChromiumインストールが毎回走るため、従来より1回あたりの
+  実行時間が数十秒〜数分程度長くなっている

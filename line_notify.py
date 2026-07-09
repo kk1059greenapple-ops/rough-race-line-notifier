@@ -93,12 +93,16 @@ def send_line_message(
 
 def build_rough_race_message(race: dict) -> str:
     """検出結果の1レース分をLINEメッセージ用テキストに整形する。"""
+    lap_line = ""
+    if race.get("b1_lap", "-") != "-" or race.get("best_lap", "-") != "-":
+        lap_line = f"\n1号艇一周タイム: {race.get('b1_lap', '-')} / 最速一周タイム: {race.get('best_lap', '-')}"
     return (
         f"🔥 荒れそうなレース検知\n"
         f"{race['venue']} {race['race_no']}R（締切 {race['deadline']}）\n"
         f"判定: {race['status']}（score {race['score']}）\n"
         f"理由: {race['reasons']}\n"
         f"1号艇展示タイム: {race['b1_ex']} / 最速展示タイム: {race['best_ex']}"
+        f"{lap_line}"
     )
 
 
